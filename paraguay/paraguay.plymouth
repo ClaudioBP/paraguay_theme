@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=Paraguay
+Description=Bandera paraguaya de puntos, ondeando
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/paraguay
+ScriptFile=/usr/share/plymouth/themes/paraguay/paraguay.script

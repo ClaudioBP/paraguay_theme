@@ -1,0 +1,598 @@
+# paraguay.script -- bandera paraguaya de puntos, ondeando.
+#
+# Comentarios en ASCII a proposito. Este archivo debe quedar con finales de
+# linea LF y sin BOM: con CRLF o BOM Plymouth lo descarta entero.
+#
+# Como funciona (detalle en docs/arquitectura/tema.md):
+#  - Cada sprite es un TRAMO vertical de puntos ya dibujado en un atlas, en
+#    NT tamanos x NB brillos ("aspectos"). Mover tramos y no puntos sueltos
+#    divide por cuatro el trabajo del interprete en cada refresco.
+#  - La onda se calcula una vez por paso de tiempo y por columna (tablas TX,
+#    TY, TK). Cada banda de tramos lee la misma tabla RET pasos mas atras que
+#    la banda de arriba: de ahi sale el pliegue diagonal.
+#  - Un sprite "cobertor" invisible hace que Plymouth redibuje la caja de la
+#    bandera como un solo rectangulo en vez de dos por tramo.
+#
+# Reglas del lenguaje que este archivo respeta (ver
+# docs/investigacion/plymouth-script-referencia.md): no hay true/false, no
+# existe la sentencia vacia, asignar a un nombre que ya es global pisa el
+# global (por eso los globales van en MAYUSCULAS y los locales se declaran
+# con "local."), y SetPosition siempre lleva z.
+#
+# Version minima de Plymouth: 0.9.5 (2020), la primera con Image.Crop. Lo que
+# aparecio despues (SetDisplayHotplugFunction, 23.51) se usa de modo que en una
+# version anterior la llamada no hace nada: llamar a algo inexistente da NULL.
+
+# >>> DATOS GENERADOS por scripts/generar_tema.py -- no editar a mano
+# grilla 24x44, escudo M17, tramos de 4, 30 refrescos por segundo
+FPS = 30;
+PASOS = [8, 10, 12, 14, 16, 20, 24, 32];
+NPASOS = 8;
+COLS = 44;
+NBANDAS = 6;
+ALTO_BANDA = 4.033333;      # alto de una banda de tramos, en pasos
+ALTO_BANDERA = 24.2;    # alto de la bandera, en pasos
+NT = 5;
+NB = 7;
+NFP = 7;                 # familias (filas) del atlas principal p<paso>.png
+NFE = 9;                # familias (filas) del atlas del escudo e<paso>.png
+FAMB = [0, 0, 1, 1, 2, 2];   # familia regular de cada banda
+# tramos recortados por el escudo: banda * 100 + columna -> familia + 1 (-1: sin tramo)
+EXC = [];
+EXC[219] = 4; EXC[220] = 5; EXC[221] = 5; EXC[222] = 5;
+EXC[223] = 5; EXC[224] = 4; EXC[319] = 6; EXC[320] = 7;
+EXC[321] = 7; EXC[322] = 7; EXC[323] = 7; EXC[324] = 6;
+SUBP = 0.370118;            # sub-paso del escudo / paso
+EMED = 8;                # sub-columna central del escudo
+# piezas del escudo: sub-columna, banda, sub-fila inicial, familia
+NEP = 17;
+EP = [
+    [0, 3, 6, 0], [1, 3, 4, 1], [2, 3, 3, 2], [3, 3, 2, 3], [4, 3, 1, 4], [5, 3, 1, 5],
+    [6, 3, 0, 6], [7, 3, 0, 7], [8, 3, 0, 8], [9, 3, 0, 7], [10, 3, 0, 6], [11, 3, 1, 5],
+    [12, 3, 1, 4], [13, 3, 2, 3], [14, 3, 3, 2], [15, 3, 4, 1], [16, 3, 6, 0]];
+NK = 61;                 # columnas de la tabla de onda: 44 principales + 17 del escudo
+CU = [
+    0, 0.023256, 0.046512, 0.069767, 0.093023, 0.116279, 0.139535, 0.162791,
+    0.186047, 0.209302, 0.232558, 0.255814, 0.27907, 0.302326, 0.325581, 0.348837,
+    0.372093, 0.395349, 0.418605, 0.44186, 0.465116, 0.488372, 0.511628, 0.534884,
+    0.55814, 0.581395, 0.604651, 0.627907, 0.651163, 0.674419, 0.697674, 0.72093,
+    0.744186, 0.767442, 0.790698, 0.813953, 0.837209, 0.860465, 0.883721, 0.906977,
+    0.930233, 0.953488, 0.976744, 1, 0.431141, 0.439748, 0.448356, 0.456963,
+    0.46557, 0.474178, 0.482785, 0.491393, 0.5, 0.508607, 0.517215, 0.525822,
+    0.53443, 0.543037, 0.551644, 0.560252, 0.568859];
+CE = [
+    0.05, 0.065167, 0.082512, 0.100786, 0.119691, 0.139079, 0.158862, 0.178978,
+    0.199385, 0.220049, 0.240945, 0.262051, 0.28335, 0.304827, 0.326471, 0.348269,
+    0.370214, 0.392296, 0.414509, 0.436845, 0.4593, 0.481867, 0.504541, 0.527319,
+    0.550197, 0.573169, 0.596234, 0.619388, 0.642628, 0.665951, 0.689354, 0.712836,
+    0.736394, 0.760025, 0.783728, 0.807501, 0.831342, 0.855249, 0.879221, 0.903256,
+    0.927353, 0.95151, 0.975726, 1, 0.426534, 0.434812, 0.443105, 0.451414,
+    0.459739, 0.46808, 0.476435, 0.484806, 0.493191, 0.50159, 0.510004, 0.518432,
+    0.526873, 0.535329, 0.543797, 0.552279, 0.560774];
+# onda (ver ONDA en scripts/generar_tema.py)
+CICLO = 90;
+RET = 1;
+A1 = 7.539822;
+W1 = 0.139626;
+A2 = 15.707963;
+W2 = 0.20944;
+F2 = 1.3;
+AM2 = 0.3;
+NORM = 0.769231;
+AX = 0.5;
+AY = 1.2;
+CAIDA = 0.9;
+ENCOGE = 0.7;
+ENCOGE_Z = 0.4;
+COSFL = 0.62161;
+SINFL = 0.783327;
+LUZ0 = 0.35;
+LUZ1 = 0.65;
+REV_T = 42;
+REV_A = 0.35;
+RANURAS = 24;
+# <<< FIN DE DATOS GENERADOS
+
+# ----------------------------------------------------------------- estado
+POS = 0;          # paso de tiempo actual; avanza PASO_T por refresco
+PASO_T = 1;
+ULTIMO = -1;      # ultimo paso de tiempo dibujado
+CUADROS = 0;      # refrescos contados
+INTRO = 1;        # 1 mientras la bandera se esta revelando
+RELOJ0 = -1;      # lectura del reloj de progreso al empezar la medida (segundos)
+RELOJ_ANT = -1;   # lectura anterior, para notar cuando el reloj esta congelado
+CUADROS0 = 0;
+RITMO = FPS;      # refrescos por segundo medidos (promedio movil)
+TX = [];          # TX[paso][columna]: x del tramo
+TY = [];          # TY[paso][columna]: desplazamiento vertical
+TK = [];          # TK[paso][columna]: aspecto (it * NB + ib)
+BANDAS = [];      # BANDAS[banda][i]: sprite
+NBANDA = [];      # cuantos sprites tiene cada banda
+DLG = 0;          # 1 cuando los sprites del dialogo ya existen
+ACTUALIZANDO = 0; # 1 en los modos de actualizacion: las ranuras son la barra
+AVANCE = 0;       # ranuras encendidas de la barra de actualizacion
+PORCENTAJE = -1;  # ultimo avance de actualizacion recibido (-1: ninguno)
+DLG_TIPO = 0;     # dialogo pendiente: 0 ninguno, 1 clave, 2 pregunta
+DLG_PREG = "";    # su texto
+DLG_DATO = 0;     # caracteres tecleados (clave) o texto escrito (pregunta)
+MENSAJE = "";     # mensaje en pantalla
+
+# ------------------------------------------------------------- utilidades
+
+# Largo aproximado de un texto, en caracteres. CharAt da bytes: los de un
+# caracter no ASCII (todos mayores que "~") se cuentan de a dos, que es lo que
+# ocupa una letra acentuada en UTF-8. No se usa String.Length porque recien
+# existe desde Plymouth 23.51; en versiones anteriores devolveria NULL.
+fun largo (texto) {
+    local.n = 0;
+    local.altos = 0;
+    local.c = "";
+    if (!texto) return 0;
+    for (n = 0; n < 200; n++) {
+        c = texto.CharAt(n);
+        if (c == "") return n - Math.Int(altos / 2);
+        if (c > "~") altos++;
+    }
+    return n - Math.Int(altos / 2);
+}
+
+# Mide las pantallas: el lienzo comun (ANCHO x ALTO, el maximo, donde Plymouth
+# centra cada pantalla) y la pantalla mas chica (ANCHO_MIN x ALTO_MIN), que
+# fija el tamano de la bandera. Se recorre por indice porque, sin indice,
+# Window.GetWidth() da el maximo en Plymouth actual pero el minimo en 0.9.5.
+fun medir_pantallas () {
+    local.q = 0;
+    local.w = 0;
+    local.h = 0;
+    global.ANCHO = 0;
+    global.ALTO = 0;
+    global.ANCHO_MIN = 0;
+    global.ALTO_MIN = 0;
+    for (q = 0; q < 8 && Window.GetWidth(q); q++) {
+        w = Window.GetWidth(q);
+        h = Window.GetHeight(q);
+        if (w > ANCHO) ANCHO = w;
+        if (h > ALTO) ALTO = h;
+        if (ANCHO_MIN == 0 || w < ANCHO_MIN) ANCHO_MIN = w;
+        if (ALTO_MIN == 0 || h < ALTO_MIN) ALTO_MIN = h;
+    }
+    if (ANCHO == 0) {
+        ANCHO = Window.GetWidth();
+        ALTO = Window.GetHeight();
+        ANCHO_MIN = ANCHO;
+        ALTO_MIN = ALTO;
+    }
+}
+
+# Parte un atlas en sus celdas: resultado[familia][aspecto].
+fun recortar (atlas, familias) {
+    local.res = [];
+    local.fila = [];
+    local.cw = atlas.GetWidth() / NL;
+    local.ch = atlas.GetHeight() / familias;
+    local.f = 0;
+    local.l = 0;
+    for (f = 0; f < familias; f++) {
+        fila = [];
+        for (l = 0; l < NL; l++) {
+            fila[l] = atlas.Crop(l * cw, f * ch, cw, ch);
+        }
+        res[f] = fila;
+    }
+    return res;
+}
+
+# Crea un tramo: banda, columna de la tabla, imagenes por aspecto, y en reposo.
+fun nuevo_tramo (banda, columna, imagenes, arriba, capa) {
+    local.s = Sprite();
+    s.SetOpacity(0);
+    s.SetZ(capa);
+    s.k = columna;
+    s.im = imagenes;
+    s.y0 = arriba;
+    BANDAS[banda][NBANDA[banda]] = s;
+    NBANDA[banda] = NBANDA[banda] + 1;
+}
+
+# ------------------------------------------------------------------ inicio
+
+fun iniciar () {
+    local.q = 0;
+    local.lim = 0;
+    local.b = 0;
+    local.c = 0;
+    local.k = 0;
+    local.u = 0;
+    local.e = 0;
+    local.f = 0;
+    local.p = 0;
+    local.y = 0;
+
+    # La escena se dimensiona con la pantalla mas chica y se centra en el
+    # lienzo comun (el maximo), que es como Plymouth reparte varias pantallas.
+    medir_pantallas();
+    lim = Math.Min(ANCHO_MIN * 0.56 / COLS, ALTO_MIN * 0.54 / ALTO_BANDERA);
+    global.PASO = PASOS[0];
+    for (q = 0; q < NPASOS; q++) {
+        if (PASOS[q] <= lim) PASO = PASOS[q];
+    }
+
+    global.SUB = SUBP * PASO;
+    global.FW = COLS * PASO;
+    global.FH = ALTO_BANDERA * PASO;
+    global.X0 = Math.Int(ANCHO / 2 - FW / 2);
+    global.Y0 = Math.Int(ALTO / 2 - FH / 2);
+    global.DLG_Y = Math.Int(Y0 + FH + PASO * (AY + CAIDA + 1.5));
+    local.letra = Math.Max(9, Math.Int(PASO * 0.7));
+    global.FUENTE = "Sans " + letra;
+    # Renglones del dialogo. La letra no baja de 9 puntos, asi que con pasos
+    # chicos el alto de linea manda sobre el paso.
+    global.LINEA = Math.Max(PASO * 1.2, letra * 1.9);
+    global.Y_RANURAS = Math.Int(DLG_Y + LINEA * 1.45);
+    global.Y_ENTRADA = Math.Int(Y_RANURAS + PASO * 0.9 + LINEA * 0.15);
+    global.Y_MENSAJE = Math.Int(Y_ENTRADA + LINEA);
+
+    global.NL = NT * NB;
+    local.ap = Image("p" + PASO + ".png");
+    local.ae = Image("e" + PASO + ".png");
+    global.IMP = recortar(ap, NFP);
+    global.IME = recortar(ae, NFE);
+    local.ecw = ae.GetWidth() / NL;
+
+    # constantes por columna de la tabla de onda
+    global.QX = [];
+    global.QA1 = [];
+    global.QA2 = [];
+    global.QDX = [];
+    global.QEN = [];
+    global.QDY = [];
+    global.QCA = [];
+    global.QLZ = [];
+    for (k = 0; k < NK; k++) {
+        u = CU[k];
+        e = CE[k];
+        if (k < COLS) QX[k] = X0 + k * PASO;
+        else QX[k] = X0 + FW / 2 + (k - COLS - EMED) * SUB - ecw / 2;
+        QA1[k] = A1 * u;
+        QA2[k] = A2 * u + F2;
+        QDX[k] = PASO * AX * e;
+        QEN[k] = PASO * ENCOGE * u;
+        QDY[k] = PASO * AY * e;
+        QCA[k] = PASO * CAIDA * u * u;
+        QLZ[k] = LUZ0 + LUZ1 * e;
+    }
+
+    # cobertor: la caja de la bandera mas el margen que recorre la onda
+    global.IMG_COB = IMP[0][0].Crop(0, 0,
+        Math.Int(FW + PASO * (AX * 2 + ENCOGE * (1 + ENCOGE_Z) + 2)),
+        Math.Int(FH + PASO * (AY * 2 + CAIDA + 2)));
+    global.COBERTOR = Sprite(IMG_COB);
+    COBERTOR.SetPosition(Math.Int(X0 - PASO * (AX + ENCOGE * (1 + ENCOGE_Z) + 1)),
+                         Math.Int(Y0 - PASO * (AY + 1)), 0);
+    COBERTOR.SetOpacity(0);
+
+    # tramos de la grilla principal
+    for (b = 0; b < NBANDAS; b++) {
+        BANDAS[b] = [];
+        NBANDA[b] = 0;
+    }
+    for (b = 0; b < NBANDAS; b++) {
+        y = Math.Int(Y0 + b * ALTO_BANDA * PASO);
+        for (c = 0; c < COLS; c++) {
+            f = EXC[b * 100 + c];
+            if (!f) f = FAMB[b] + 1;
+            if (f > 0) nuevo_tramo(b, c, IMP[f - 1], y, 1);
+        }
+    }
+    # piezas del escudo
+    for (q = 0; q < NEP; q++) {
+        p = EP[q];
+        nuevo_tramo(p[1], COLS + p[0], IME[p[3]],
+                    Math.Int(Y0 + FH / 2 + (p[2] - EMED) * SUB - SUB / 2), 2);
+    }
+
+    local.modo = Plymouth.GetMode();
+    if (modo == "updates" || modo == "system-upgrade" || modo == "firmware-upgrade") {
+        ACTUALIZANDO = 1;
+        crear_dialogo();
+        if (PORCENTAJE < 0) poner_ranuras(0, 1);
+        else al_actualizar(PORCENTAJE);
+    }
+}
+
+# ------------------------------------------------------------------- onda
+
+# Llena la fila "st" de la tabla: una entrada por columna.
+fun calcular (st) {
+    local.xs = [];
+    local.ys = [];
+    local.ks = [];
+    local.k = 0;
+    local.e = 0;
+    local.t = 0;
+    local.z = 0;
+    local.cx = 0;
+    local.it = 0;
+    local.ib = 0;
+    local.w1 = W1 * st;
+    local.w2 = W2 * st;
+    for (k = 0; k < NK; k++) {
+        t = QA1[k] - w1;
+        z = Math.Sin(t);
+        cx = Math.Cos(t);
+        t = QA2[k] - w2;
+        z = (z + AM2 * Math.Sin(t)) * NORM;
+        cx = (cx + AM2 * Math.Cos(t)) * NORM;
+        e = CE[k];
+        xs[k] = Math.Int(QX[k] + QDX[k] * cx - QEN[k] * (1 + ENCOGE_Z * z * e));
+        ys[k] = Math.Int(QDY[k] * z + QCA[k]);
+        it = Math.Int((0.5 + 0.5 * z * e) * NT);
+        if (it > NT - 1) it = NT - 1;
+        ib = Math.Int((0.5 + 0.5 * (cx * COSFL + z * SINFL) * QLZ[k]) * NB);
+        if (ib > NB - 1) ib = NB - 1;
+        ks[k] = it * NB + ib;
+    }
+    TX[st] = xs;
+    TY[st] = ys;
+    TK[st] = ks;
+}
+
+fun al_refrescar () {
+    local.b = 0;
+    local.i = 0;
+    local.n = 0;
+    local.k = 0;
+    local.o = 0;
+    local.st = 0;
+    local.s = 0;
+    local.sp = 0;
+    local.xs = 0;
+    local.ys = 0;
+    local.ks = 0;
+    local.op = 0;
+    local.base = Math.Int(POS);
+
+    POS = POS + PASO_T;
+    CUADROS = CUADROS + 1;
+    # Con PASO_T menor que 1 (Plymouth refresca mas rapido que FPS) hay
+    # refrescos sin paso nuevo: no hay nada que mover ni que redibujar.
+    if (base == ULTIMO) return;
+    ULTIMO = base;
+    COBERTOR.SetImage(IMG_COB);
+
+    if (INTRO) {
+        # el frente de revelado avanza del asta (u = 0) al batiente (u = 1)
+        o = POS / REV_T * (1 + REV_A);
+        op = [];
+        for (k = 0; k < NK; k++) {
+            n = (o - CU[k]) / REV_A;
+            if (n < 0) n = 0;
+            if (n > 1) n = 1;
+            op[k] = n;
+        }
+    }
+    for (b = 0; b < NBANDAS; b++) {
+        st = (((base - b * RET) % CICLO) + CICLO) % CICLO;
+        if (!TK[st]) calcular(st);
+        xs = TX[st];
+        ys = TY[st];
+        ks = TK[st];
+        sp = BANDAS[b];
+        n = NBANDA[b];
+        for (i = 0; i < n; i++) {
+            s = sp[i];
+            k = s.k;
+            s.SetX(xs[k]);
+            s.SetY(s.y0 + ys[k]);
+            s.SetImage(s.im[ks[k]]);
+            if (INTRO) s.SetOpacity(op[k]);
+        }
+    }
+    if (INTRO && POS >= REV_T) INTRO = 0;
+}
+
+# No hay reloj en el lenguaje; el unico tiempo real llega aqui (~30 veces por
+# segundo, congelado mientras se pide una clave). Se usa para que la onda
+# conserve aproximadamente su velocidad si el equipo no alcanza a refrescar
+# FPS veces por segundo, o si esta version de Plymouth ignora SetRefreshRate.
+fun al_progreso (duracion, avance) {
+    local.dt = 0;
+    local.fps = 0;
+    # Reloj congelado (hay una clave pendiente): los refrescos siguen corriendo
+    # y arruinarian la medida, asi que se empieza de nuevo cuando vuelva a andar.
+    if (duracion == RELOJ_ANT) {
+        RELOJ0 = -1;
+        return;
+    }
+    RELOJ_ANT = duracion;
+    if (RELOJ0 < 0) {
+        RELOJ0 = duracion;
+        CUADROS0 = CUADROS;
+        return;
+    }
+    dt = duracion - RELOJ0;
+    if (dt < 0.5) return;
+    fps = (CUADROS - CUADROS0) / dt;
+    RELOJ0 = duracion;
+    CUADROS0 = CUADROS;
+    # Una medida imposible se descarta.
+    if (fps < 2 || fps > FPS * 2.5) return;
+    # El promedio amortigua los altibajos: corregir con la sola medida anterior
+    # acelera la onda cuando el ritmo sube y baja de un tramo al siguiente.
+    RITMO = (RITMO + fps) / 2;
+    if (RITMO > FPS * 0.85 && RITMO < FPS * 1.15) PASO_T = 1;
+    else PASO_T = FPS / RITMO;
+}
+
+# ---------------------------------------------------------------- dialogo
+# Clave, pregunta, mensajes y progreso de actualizacion, debajo de la bandera.
+# Las ranuras son puntos y no dependen de que haya fuentes: si falta el plugin
+# de texto, Image.Text devuelve una imagen vacia y las ranuras siguen visibles.
+
+fun crear_dialogo () {
+    local.a = Image("d" + PASO + ".png");
+    local.cw = a.GetWidth() / 2;
+    local.ch = a.GetHeight();
+    local.sep = Math.Int(PASO * 0.8);
+    local.x = Math.Int(ANCHO / 2 - (RANURAS - 1) * sep / 2 - cw / 2);
+    local.q = 0;
+    local.s = 0;
+    global.IMG_OFF = a.Crop(0, 0, cw, ch);
+    global.IMG_ON = a.Crop(cw, 0, cw, ch);
+    global.RANURA = [];
+    for (q = 0; q < RANURAS; q++) {
+        s = Sprite(IMG_OFF);
+        s.SetPosition(x + q * sep, Y_RANURAS, 5);
+        s.SetOpacity(0);
+        RANURA[q] = s;
+    }
+    global.TXT_PREGUNTA = Sprite();
+    global.TXT_ENTRADA = Sprite();
+    global.TXT_MENSAJE = Sprite();
+    DLG = 1;
+}
+
+fun poner_ranuras (encendidas, opacidad) {
+    local.q = 0;
+    for (q = 0; q < RANURAS; q++) {
+        if (q < encendidas) RANURA[q].SetImage(IMG_ON);
+        else RANURA[q].SetImage(IMG_OFF);
+        RANURA[q].SetOpacity(opacidad);
+    }
+}
+
+fun poner_texto (sprite, texto, arriba) {
+    # un pedido sin texto llega como NULL, y Image.Text lo dibujaria como "#NULL"
+    if (!texto) texto = "";
+    local.im = Image.Text(texto, 0.82, 0.82, 0.82, 1, FUENTE);
+    local.tope = ANCHO_MIN * 0.92;
+    # un texto mas ancho que la pantalla se achica para que entre
+    if (im.GetWidth() > tope) im = im.Scale(tope, im.GetHeight() * tope / im.GetWidth());
+    sprite.SetImage(im);
+    sprite.SetPosition(Math.Int(ANCHO / 2 - im.GetWidth() / 2), Math.Int(arriba), 5);
+    sprite.SetOpacity(1);
+}
+
+# Plymouth repite este aviso con cada tecla: el texto solo se redibuja si cambio.
+fun al_pedir_clave (pregunta, tecleados) {
+    if (!DLG) crear_dialogo();
+    if (DLG_TIPO != 1 || pregunta != DLG_PREG) poner_texto(TXT_PREGUNTA, pregunta, DLG_Y);
+    DLG_TIPO = 1;
+    DLG_PREG = pregunta;
+    DLG_DATO = tecleados;
+    TXT_ENTRADA.SetOpacity(0);
+    poner_ranuras(tecleados, 1);
+}
+
+fun al_preguntar (pregunta, entrada) {
+    if (!DLG) crear_dialogo();
+    if (DLG_TIPO != 2 || pregunta != DLG_PREG) poner_texto(TXT_PREGUNTA, pregunta, DLG_Y);
+    DLG_TIPO = 2;
+    DLG_PREG = pregunta;
+    DLG_DATO = entrada;
+    poner_texto(TXT_ENTRADA, entrada, Y_ENTRADA);
+    poner_ranuras(largo(entrada), 1);
+}
+
+fun al_normal () {
+    DLG_TIPO = 0;
+    if (!DLG) return;
+    TXT_PREGUNTA.SetOpacity(0);
+    if (ACTUALIZANDO) {
+        if (PORCENTAJE < 0) {
+            TXT_ENTRADA.SetOpacity(0);
+            poner_ranuras(0, 1);
+        } else {
+            al_actualizar(PORCENTAJE);
+        }
+    } else {
+        TXT_ENTRADA.SetOpacity(0);
+        poner_ranuras(0, 0);
+    }
+}
+
+# Ubuntu antepone estos prefijos a algunos mensajes.
+fun sin_prefijo (texto) {
+    if (texto.SubString(0, 5) == "keys:") return texto.SubString(5, 10000);
+    if (texto.SubString(0, 17) == "fsckd-cancel-msg:") return texto.SubString(17, 10000);
+    return texto;
+}
+
+fun al_mensaje (texto) {
+    if (!DLG) crear_dialogo();
+    MENSAJE = sin_prefijo(texto);
+    poner_texto(TXT_MENSAJE, MENSAJE, Y_MENSAJE);
+}
+
+# Solo se oculta el mensaje que esta en pantalla: el pedido puede referirse a
+# uno anterior que ya fue reemplazado.
+fun al_ocultar_mensaje (texto) {
+    if (DLG && sin_prefijo(texto) == MENSAJE) {
+        TXT_MENSAJE.SetOpacity(0);
+        MENSAJE = "";
+    }
+}
+
+fun al_actualizar (porcentaje) {
+    if (!DLG) crear_dialogo();
+    ACTUALIZANDO = 1;
+    PORCENTAJE = porcentaje;
+    AVANCE = Math.Int(porcentaje * RANURAS / 100 + 0.5);
+    # con una clave o una pregunta abierta las ranuras son suyas: la barra
+    # vuelve cuando el pedido se cierra (al_normal)
+    if (DLG_TIPO) return;
+    poner_ranuras(AVANCE, 1);
+    poner_texto(TXT_ENTRADA, porcentaje + " %", Y_ENTRADA);
+}
+
+# Arma la escena de nuevo y repone lo que habia en el dialogo.
+fun rearmar () {
+    local.tipo = DLG_TIPO;
+    if (DLG) {
+        poner_ranuras(0, 0);
+        TXT_PREGUNTA.SetOpacity(0);
+        TXT_ENTRADA.SetOpacity(0);
+        TXT_MENSAJE.SetOpacity(0);
+    }
+    DLG = 0;
+    DLG_TIPO = 0;
+    TX = [];
+    TY = [];
+    TK = [];
+    POS = 0;
+    ULTIMO = -1;
+    INTRO = 1;
+    iniciar();
+    if (tipo == 1) al_pedir_clave(DLG_PREG, DLG_DATO);
+    if (tipo == 2) al_preguntar(DLG_PREG, DLG_DATO);
+    if (MENSAJE != "") al_mensaje(MENSAJE);
+}
+
+# Plymouth agrego o quito una pantalla. Pasa en el arranque, cuando termina de
+# cargar el controlador de video: pueden cambiar el lienzo y el tamano de la
+# bandera. El aviso llega una vez por cada pantalla quitada y por cada una
+# agregada: sin pantallas no hay nada que dibujar, y si al final quedaron las
+# mismas medidas no hace falta rehacer nada.
+fun al_cambiar_pantallas () {
+    local.a = ANCHO;
+    local.b = ALTO;
+    local.c = ANCHO_MIN;
+    local.d = ALTO_MIN;
+    if (!Window.GetWidth(0)) return;
+    medir_pantallas();
+    if (ANCHO == a && ALTO == b && ANCHO_MIN == c && ALTO_MIN == d) return;
+    rearmar();
+}
+
+# ---------------------------------------------------------------- arranque
+iniciar();
+Plymouth.SetRefreshRate(FPS);
+Plymouth.SetRefreshFunction(al_refrescar);
+Plymouth.SetBootProgressFunction(al_progreso);
+Plymouth.SetDisplayNormalFunction(al_normal);
+Plymouth.SetDisplayPasswordFunction(al_pedir_clave);
+Plymouth.SetDisplayQuestionFunction(al_preguntar);
+Plymouth.SetDisplayMessageFunction(al_mensaje);
+Plymouth.SetHideMessageFunction(al_ocultar_mensaje);
+Plymouth.SetSystemUpdateFunction(al_actualizar);
+Plymouth.SetDisplayHotplugFunction(al_cambiar_pantallas);

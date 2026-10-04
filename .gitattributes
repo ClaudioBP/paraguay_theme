@@ -1,0 +1,11 @@
+# El tema se instala en Linux: todo texto que viaje al equipo destino va con LF.
+* text=auto
+*.sh       text eol=lf
+*.script   text eol=lf
+*.plymouth text eol=lf
+*.py       text eol=lf
+*.md       text eol=lf
+Makefile   text eol=lf
+*.png      binary
+*.gif      binary
+*.mp4      binary
