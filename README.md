@@ -39,7 +39,7 @@ Tema para [Plymouth](https://www.freedesktop.org/wiki/Software/Plymouth/) (la pa
 En el equipo Linux de destino:
 
 ```bash
-git clone -c core.autocrlf=false https://github.com/<usuario>/paraguay_theme.git
+git clone -c core.autocrlf=false https://github.com/ClaudioBP/paraguay_theme.git
 cd paraguay_theme
 
 # 1. Simulación previa (muestra las acciones sin realizar cambios en el sistema)

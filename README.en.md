@@ -39,7 +39,7 @@ A theme for [Plymouth](https://www.freedesktop.org/wiki/Software/Plymouth/) (the
 On your target Linux machine:
 
 ```bash
-git clone -c core.autocrlf=false https://github.com/<user>/paraguay_theme.git
+git clone -c core.autocrlf=false https://github.com/ClaudioBP/paraguay_theme.git
 cd paraguay_theme
 
 # 1. Dry run / simulation (shows what actions would be taken without modifying the system)
